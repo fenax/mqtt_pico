@@ -13,6 +13,7 @@ use embassy_rp::gpio::{Level, Output};
 use embassy_rp::peripherals::{DMA_CH0, PIO0};
 use embassy_rp::pio::{InterruptHandler, Pio};
 use embassy_time::{Duration, Timer};
+use heapless::{String, Vec};
 use rust_mqtt::client::client::MqttClient;
 use rust_mqtt::client::client_config::ClientConfig;
 use rust_mqtt::utils::rng_generator::CountingRng;
@@ -38,6 +39,9 @@ async fn net_task(mut runner: embassy_net::Runner<'static, cyw43::NetDriver<'sta
 #[embassy_executor::main]
 async fn main(spawner: Spawner) {
     let p = embassy_rp::init(Default::default());
+
+    // Wifi chip firmware
+
     //let fw = include_bytes!("../../../embassy/cyw43-firmware/43439A0.bin");
     //let clm = include_bytes!("../../../embassy/cyw43-firmware/43439A0_clm.bin");
 
@@ -47,11 +51,30 @@ async fn main(spawner: Spawner) {
     //     probe-rs download ../../cyw43-firmware/43439A0_clm.bin --binary-format bin --chip RP2040 --base-address 0x10140000
     let fw = unsafe { core::slice::from_raw_parts(0x10100000 as *const u8, 230321) };
     let clm = unsafe { core::slice::from_raw_parts(0x10140000 as *const u8, 4752) };
+    
+    // Secrets
+    let wifi_password = core::env!("WIFI_PASSWORD", "No wifi password set");
+    let wifi_ssid = core::env!("WIFI_SSID", "No wifi SSID set");
+
+    // Constants
+    let chip_id:heapless::String<12> = {
+        let chip_id_num = embassy_rp::pac::SYSINFO.chip_id().read();
+        info!("CHIP ID IS : {:x}", chip_id_num.0);
+        let mut chip_id: heapless::String<12> = heapless::String::new();
+        core::fmt::write(&mut chip_id, format_args!("ksl-{:X}", chip_id_num.0));
+        chip_id
+    };
+    let prefix = "embedded";
+
 
     let pwr = Output::new(p.PIN_23, Level::Low);
     let cs = Output::new(p.PIN_25, Level::High);
     let mut pio = Pio::new(p.PIO0, Irqs);
     let spi = PioSpi::new(&mut pio.common, pio.sm0, pio.irq0, cs, p.PIN_24, p.PIN_29, p.DMA_CH0);
+
+
+
+
 
     static STATE: StaticCell<cyw43::State> = StaticCell::new();
     let state = STATE.init(cyw43::State::new());
@@ -83,7 +106,7 @@ async fn main(spawner: Spawner) {
     unwrap!(spawner.spawn(net_task(runner)));
 
 
-    control.join("IOT_maison", JoinOptions::new()).await.unwrap();
+    control.join(&wifi_ssid, JoinOptions::new(wifi_password)).await.unwrap();
 
 
 
@@ -110,7 +133,7 @@ async fn main(spawner: Spawner) {
         );
 
         config.add_max_subscribe_qos(rust_mqtt::packet::v5::publish_packet::QualityOfService::QoS1);
-        config.add_client_id("client");
+        config.add_client_id(&chip_id);
 
         config.max_packet_size = 100;
         let mut recv_buffer = [0; 80];
@@ -125,7 +148,31 @@ async fn main(spawner: Spawner) {
         );
 
         client.connect_to_broker().await.unwrap();
+        let mut buff :String<32> = String::new();
+        core::fmt::write(&mut buff, format_args!("{prefix}/{chip_id}/#")).expect("could not write topic, maybe prefix too long");
+        client.subscribe_to_topic(&buff).await.unwrap();
+        buff.clear();
+        core::fmt::write(&mut buff, format_args!("{prefix}/+")).expect("prefix too long");
+        client.subscribe_to_topic(&buff).await.unwrap();
         loop {
+            let (topic, body) = client.receive_message().await.unwrap();
+            let mut parts = topic.split('/');
+            core::assert_eq!(Some(prefix),parts.next());
+            match parts.next(){
+                Some("time") => {}
+                Some("local_time") => {}
+                Some(x) if x == chip_id => {
+                    match parts.next(){
+                        Some("led") => 
+                    }
+                }
+                Some(y) => {
+                    debug!("unknown {}", y)
+                }
+                None => {
+                    warn!("no second arg")
+                }
+            }
             client
                 .send_message(
                     "hello",
