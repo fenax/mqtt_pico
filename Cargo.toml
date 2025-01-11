@@ -1,3 +1,5 @@
+workspace.resolver = "2"
+
 [package]
 authors = ["Dario Nieuwenhuis <dirbaio@dirbaio.net>"]
 edition = "2018"
@@ -107,6 +109,7 @@ rust-mqtt = { git = "https://github.com/obabec/rust-mqtt.git", branch = "main", 
 ] }
 
 itertools = { version = "0.13.0", default-features = false }
+either = { version = "1.13.0", default-features = false }
 
 [profile.release]
 debug = 2
